@@ -5,7 +5,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Windows.Forms;
-using System.Linq; // Diperlukan untuk .ToList()
 
 namespace MovingObject {
     public partial class Form1 : Form {
