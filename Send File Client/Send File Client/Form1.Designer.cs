@@ -72,7 +72,6 @@
             tbServer.Name = "tbServer";
             tbServer.Size = new Size(243, 27);
             tbServer.TabIndex = 3;
-            tbServer.Text = "127.0.0.1";
             // 
             // openFileDialog
             // 
@@ -86,7 +85,7 @@
             lbFile.Size = new Size(32, 20);
             lbFile.TabIndex = 4;
             lbFile.Text = "File";
-            lbFile.Click += label1_Click;
+            lbFile.Click += btnBrowse_Click;
             // 
             // lbServer
             // 

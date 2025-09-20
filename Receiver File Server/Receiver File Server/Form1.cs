@@ -3,115 +3,94 @@ using System.Net.Sockets;
 
 namespace Receiver_File_Server {
     public partial class Form1 : Form {
-        private List<Socket> listSockets;
-        private static readonly object fileLock = new object();
-        private TcpListener? tcpListener;
-        private Thread? thdListener;
-
         public Form1() {
             InitializeComponent();
-            listSockets = new List<Socket>();
         }
 
         private void Form1_Load(object sender, EventArgs e) {
-            lbConnections.Items.Add("Server siap. Klik 'Start Server' untuk memulai.");
-        }
+            // Kode baru yang secara spesifik mencari alamat IPv4
+            IPHostEntry IPHost = Dns.GetHostEntry(Dns.GetHostName());
+            string myIP = "";
+            foreach (IPAddress ip in IPHost.AddressList) {
+                if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork) {
+                    myIP = ip.ToString();
+                    break;
+                }
+            }
+            lblStatus.Text = "My IP address is " + myIP;
 
-        // Tombol Start sekarang hanya bertugas memulai thread, sangat cepat dan tidak akan freeze.
-        private void btnStartServer_Click(object sender, EventArgs e) {
-            // Langsung mulai thread baru untuk semua pekerjaan server
-            thdListener = new Thread(new ThreadStart(StartServerListener));
-            thdListener.IsBackground = true;
+            // Memulai thread untuk mendengarkan koneksi
+            Thread thdListener = new Thread(new ThreadStart(listenerThread));
+            thdListener.IsBackground = true; // Agar thread mati saat aplikasi ditutup
             thdListener.Start();
-
-            // Tombol langsung dinonaktifkan untuk memberikan feedback instan
-            btnStartServer.Enabled = false;
-            btnStartServer.Text = "Starting...";
         }
 
-        // Method ini berisi SEMUA logika untuk memulai dan menjalankan server.
-        // Ini berjalan sepenuhnya di background.
-        public void StartServerListener() {
+        public void listenerThread() {
             try {
-                // 1. Mencari IP di background thread
-                var ip = Dns.GetHostAddresses(Dns.GetHostName())
-                               .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
-
-                // 2. Mengirim perintah ke UI thread untuk menampilkan IP
-                this.Invoke((MethodInvoker)delegate {
-                    if (ip != null)
-                        txtIpAddress.Text = ip.ToString();
-                    else
-                        txtIpAddress.Text = "No IPv4 address found!";
-                });
-
-                // 3. Memulai TCP Listener
-                tcpListener = new TcpListener(IPAddress.Any, 5000);
+                // Gunakan IPAddress.Any untuk mendengarkan dari semua network interface
+                TcpListener tcpListener = new TcpListener(IPAddress.Any, 8080);
                 tcpListener.Start();
 
-                // 4. Mengirim perintah ke UI thread untuk update status
-                this.Invoke((MethodInvoker)delegate {
-                    lbConnections.Items.Clear();
-                    lbConnections.Items.Add("Server started, listening on port 5000...");
-                    btnStartServer.Text = "Server Running";
-                });
-
-                // 5. Loop untuk menerima koneksi klien
                 while (true) {
                     Socket handlerSocket = tcpListener.AcceptSocket();
-                    this.Invoke((MethodInvoker)delegate {
-                        lbConnections.Items.Add($"Client {handlerSocket.RemoteEndPoint} connected.");
-                    });
+                    if (handlerSocket.Connected) {
+                        // Update UI secara aman dari thread yang berbeda
+                        this.Invoke((MethodInvoker)delegate {
+                            lbConnections.Items.Add(handlerSocket.RemoteEndPoint.ToString() + " connected.");
+                        });
 
-                    // Setiap klien ditangani oleh thread-nya sendiri
-                    Thread clientHandlerThread = new Thread(new ParameterizedThreadStart(HandleClient));
-                    clientHandlerThread.IsBackground = true;
-                    clientHandlerThread.Start(handlerSocket);
+                        // Membuat thread baru untuk menangani koneksi ini
+                        // dan MELEWATKAN socket sebagai parameter untuk menghindari race condition.
+                        Thread thdHandler = new Thread(new ParameterizedThreadStart(handlerThread));
+                        thdHandler.IsBackground = true;
+                        thdHandler.Start(handlerSocket);
+                    }
                 }
-            } catch (SocketException) {
-                // Terjadi jika server dihentikan paksa
-                this.Invoke((MethodInvoker)delegate { lbConnections.Items.Add("Server stopped."); });
             } catch (Exception ex) {
-                // Menampilkan error jika gagal memulai server
-                MessageBox.Show("Gagal memulai server: " + ex.Message);
-                this.Invoke((MethodInvoker)delegate {
-                    btnStartServer.Enabled = true;
-                    btnStartServer.Text = "Start Server";
-                });
+                MessageBox.Show("Listener Thread Error: " + ex.Message);
             }
         }
 
-        // Method untuk menangani setiap klien yang terhubung (dulu bernama handlerThread)
-        public void HandleClient(object? socketObject) {
-            if (socketObject is not Socket handlerSocket) return;
+        // Metode ini sekarang menerima parameter socket secara langsung
+        public void handlerThread(object clientSocket) {
+            Socket handlerSocket = (Socket)clientSocket; // Cast parameter ke tipe Socket
 
             try {
-                listSockets.Add(handlerSocket);
-                using (var networkStream = new NetworkStream(handlerSocket)) {
-                    // ... (logika menerima file tetap sama) ...
-                    byte[] buffer = new byte[8192];
-                    int bytesRead;
-                    string directory = "C:\\Temp";
-                    Directory.CreateDirectory(directory);
-                    string filePath = Path.Combine(directory, $"upload_{Guid.NewGuid()}.tmp");
+                using (NetworkStream networkStream = new NetworkStream(handlerSocket)) {
+                    int blockSize = 1024;
+                    byte[] dataByte = new byte[blockSize];
 
-                    using (var fileStream = File.Create(filePath)) {
-                        while ((bytesRead = networkStream.Read(buffer, 0, buffer.Length)) > 0) {
-                            fileStream.Write(buffer, 0, bytesRead);
+                    string userDocumentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                    string filePath = Path.Combine(userDocumentsPath, "upload.txt");
+
+                    // Mengunci file agar tidak diakses oleh dua thread bersamaan
+                    lock (this) {
+                        using (FileStream fileStream = File.OpenWrite(filePath)) {
+                            int bytesRead;
+                            // Membaca data dari stream sampai koneksi ditutup (bytesRead == 0)
+                            while ((bytesRead = networkStream.Read(dataByte, 0, blockSize)) > 0) {
+                                fileStream.Write(dataByte, 0, bytesRead);
+                            }
                         }
                     }
 
                     this.Invoke((MethodInvoker)delegate {
-                        lbConnections.Items.Add($"File from {handlerSocket.RemoteEndPoint} received.");
+                        lbConnections.Items.Add("File Written to " + filePath);
                     });
                 }
-            } catch (Exception) { /* Handle client disconnects silently */ } finally {
+            } catch (Exception ex) {
+                // Menampilkan error jika terjadi masalah saat menangani klien
                 this.Invoke((MethodInvoker)delegate {
-                    lbConnections.Items.Add($"Client {handlerSocket.RemoteEndPoint} disconnected.");
+                    lbConnections.Items.Add("Error with " + handlerSocket.RemoteEndPoint.ToString() + ": " + ex.Message);
                 });
-                listSockets.Remove(handlerSocket);
+            } finally {
+                // Pastikan socket selalu ditutup
                 handlerSocket.Close();
             }
+        }
+
+        private void label1_Click(object sender, EventArgs e) {
+            // Event handler ini bisa dibiarkan kosong atau dihapus jika tidak digunakan
         }
     }
 }
