@@ -8,6 +8,7 @@ namespace ChatServer {
         static List<string> history = new List<string>();
 
         static async Task Main(string[] args) {
+            Console.OutputEncoding = Encoding.UTF8; // set output encoding to UTF-8
             TcpListener server = new TcpListener(IPAddress.Any, 5000);
             server.Start();
             Console.WriteLine("Server started on port 5000");
@@ -54,6 +55,7 @@ namespace ChatServer {
                             string targetUser = parts[1];
                             string pm = $"[PM from {username}] {parts[2]}";
                             if (clients.ContainsKey(targetUser)) {
+                                Console.WriteLine($"[PM] {username} -> {targetUser}: {parts[2]}");
                                 await SendToUser(targetUser, pm);
                                 await SendToUser(username, $"[PM to {targetUser}] {parts[2]}");
                             } else {
@@ -62,6 +64,7 @@ namespace ChatServer {
                         }
                     } else {
                         history.Add($"{username}: {data}");
+                        Console.WriteLine($"{username}: {data}");
                         await Broadcast($"{username}: {data}");
                     }
                 }
